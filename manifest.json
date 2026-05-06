@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ultimate POS Price Tracker",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Shows competitor prices (Ryans, StarTech, Daraz) as badges on Ultimate POS product rows",
   "permissions": ["storage"],
   "host_permissions": [

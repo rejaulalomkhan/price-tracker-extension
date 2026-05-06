@@ -1,331 +1,288 @@
 /**
- * Ultimate POS Price Tracker - Content Script
- * Watches #pos_table for product rows and injects competitor price badges.
+ * Ultimate POS Price Tracker — Content Script
+ *
+ * Watches #pos_table on bclitstock.com for product rows,
+ * fuzzy-matches names against tracked products from panel.armanazij.me,
+ * and injects colour-coded price badges into each row.
+ *
+ * Always injects a visible indicator per row (matched or unmatched)
+ * so you can see it's working.
  */
-
 (function () {
   'use strict';
 
-  const CONFIG = {
-    apiUrl: 'https://panel.armanazij.me/api',
-    matchEndpoint: '/api/match-products',
-    productsEndpoint: '/api/products',
-    minConfidence: 0.65,
-    cacheKey: 'pt_product_matches',
-    cacheTtlMs: 30 * 60 * 1000, // 30 minutes
-  };
+  const API_BASE    = 'https://panel.armanazij.me/api';
+  const PRODUCTS_EP = '/api/products';
+  const CACHE_KEY   = 'pt_product_data';
+  const CACHE_TTL   = 30 * 60 * 1000;       // 30 min
+  const MIN_CONF    = 0.6;
 
-  // Store fetched competitor data
-  let competitorProducts = null;
-  let lastFetch = 0;
+  /* ── State ─────────────────────────────────────────────────── */
+  let tracked  = null;                       // raw API array
+  let priceMap = new Map();                  // norm_name → [{…}]
+  let status   = 'init';                     // init|loading|ready|error
 
-  // ---- Utility: Normalize product name for matching ----
-  function normalizeName(name) {
-    return name
-      .toLowerCase()
+  /* ── Helpers ───────────────────────────────────────────────── */
+  function norm(s) {
+    return s.toLowerCase()
       .replace(/\b(wired|wireless|usb|bluetooth|black|white|red|for|with|and|the)\b/g, '')
       .replace(/[^a-z0-9\s]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+      .replace(/\s+/g, ' ').trim();
   }
 
-  // ---- Utility: Similarity score (0-1) — token containment based ----
   function similarity(a, b) {
-    const na = normalizeName(a);
-    const nb = normalizeName(b);
+    const na = norm(a), nb = norm(b);
     if (!na || !nb) return 0;
-    if (na === nb) return 1.0;
-
-    // Extract meaningful tokens (skip very short ones)
-    const tokensA = na.split(' ').filter(t => t.length > 2);
-    const tokensB = nb.split(' ').filter(t => t.length > 2);
-    const common = tokensA.filter(t => tokensB.includes(t));
-
-    // Key metric: what % of the SHORTER name's tokens are in the longer one
-    const shorterCount = Math.min(tokensA.length, tokensB.length);
-    if (shorterCount > 0) {
-      const containment = common.length / shorterCount;
-      if (containment >= 0.6) {
-        return 0.5 + (containment * 0.5); // 0.6→0.8, 1.0→1.0
-      }
+    if (na === nb) return 1;
+    const ta = na.split(' ').filter(t => t.length > 2);
+    const tb = nb.split(' ').filter(t => t.length > 2);
+    const common = ta.filter(t => tb.includes(t));
+    const shorter = Math.min(ta.length, tb.length);
+    if (shorter > 0) {
+      const c = common.length / shorter;
+      if (c >= 0.6) return 0.5 + c * 0.5;
     }
-
-    // Fallback: simple word overlap
-    return common.length / Math.max(tokensA.length, tokensB.length, 1);
+    return common.length / Math.max(ta.length, tb.length, 1);
   }
 
-  // ---- Fetch competitor products from API ----
-  async function fetchCompetitorProducts() {
-    // Check cache first
+  /* ── Fetch & cache ─────────────────────────────────────────── */
+  async function fetchProducts() {
+    status = 'loading';
     try {
-      const cached = localStorage.getItem(CONFIG.cacheKey);
-      if (cached) {
-        const { data, timestamp } = JSON.parse(cached);
-        if (Date.now() - timestamp < CONFIG.cacheTtlMs) {
-          competitorProducts = data;
-          lastFetch = timestamp;
-          console.log('[PT] Loaded from cache, count:', data.length);
-          return data;
-        }
+      const raw = localStorage.getItem(CACHE_KEY);
+      if (raw) {
+        const { data, ts } = JSON.parse(raw);
+        if (Date.now() - ts < CACHE_TTL) { buildMap(data); status = 'ready'; return data; }
       }
-    } catch (e) {
-      console.warn('[PT] Cache read error:', e);
-    }
+    } catch (_) { /* ignore */ }
 
     try {
-      const res = await fetch(CONFIG.apiUrl + CONFIG.productsEndpoint, {
-        method: 'GET',
-        headers: { 'Accept': 'application/json' }
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const res = await fetch(API_BASE + PRODUCTS_EP);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
-
-      // Cache it
-      localStorage.setItem(CONFIG.cacheKey, JSON.stringify({
-        data,
-        timestamp: Date.now()
-      }));
-
-      competitorProducts = data;
-      lastFetch = Date.now();
-      console.log('[PT] Fetched from API, count:', data.length);
+      localStorage.setItem(CACHE_KEY, JSON.stringify({ data, ts: Date.now() }));
+      buildMap(data);
+      status = 'ready';
+      console.log('[PT] fetched', data.length, 'products');
       return data;
     } catch (err) {
-      console.error('[PT] Failed to fetch products:', err);
+      status = 'error';
+      console.error('[PT] fetch failed:', err);
       return null;
     }
   }
 
-  // ---- Match a single POS product name against competitor data ----
-  function findBestMatch(productName) {
-    if (!competitorProducts || !competitorProducts.length) return null;
-
-    let bestMatch = null;
-    let bestScore = 0;
-
-    for (const competitor of competitorProducts) {
-      // competitor.name is the tracked product name
-      const score = similarity(productName, competitor.name);
-      if (score > bestScore) {
-        bestScore = score;
-        bestMatch = competitor;
-      }
+  function buildMap(products) {
+    tracked = products;
+    priceMap.clear();
+    for (const p of products) {
+      const key = norm(p.name);
+      if (!priceMap.has(key)) priceMap.set(key, []);
+      priceMap.get(key).push({
+        id: p.id, name: p.name,
+        source: (p.source || '').toLowerCase(),
+        price: p.current_price,
+        currency: p.currency,
+        url: p.url,
+        updated_at: p.updated_at
+      });
     }
+  }
 
-    if (bestScore >= CONFIG.minConfidence) {
-      return { product: bestMatch, confidence: bestScore };
+  /* ── Matching ──────────────────────────────────────────────── */
+  function findMatches(posName) {
+    if (!tracked) return [];
+    const key = norm(posName);
+    if (priceMap.has(key)) return priceMap.get(key);
+    let best = 0, entries = [];
+    for (const [k, v] of priceMap) {
+      const s = similarity(posName, k);
+      if (s > best) { best = s; entries = v; }
+      else if (s === best && s > 0) entries.push(...v);
+    }
+    return best >= MIN_CONF ? entries : [];
+  }
+
+  /* ── Extract name from POS row ─────────────────────────────── */
+  function extractName(row) {
+    const sel = 'td .text-link, td a.text-link, td span.text-link, td .product-name, td a.product-name';
+    const el = row.querySelector(sel);
+    if (el) {
+      const t = (el.textContent || el.innerText || '').trim();
+      const first = t.split(/\n/)[0].trim();
+      return first.replace(/\s*[-–]\s*\d+\s*[A-Za-z]*$/, '').trim() || null;
+    }
+    const td = row.querySelector('td');
+    if (td) {
+      const t = (td.textContent || '').trim().split(/\n/)[0].trim();
+      if (t.length > 3) return t;
     }
     return null;
   }
 
-  // ---- Extract product name from a POS table row ----
-  function extractProductName(row) {
-    const span = row.querySelector('td .text-link');
-    if (!span) return null;
-    // The span contains text with <br> and a number after it
-    // e.g. "A4TECH HS-19 Headphone<br>1145"
-    const fullText = span.textContent || span.innerText;
-    // Split by lines, first line is the product name
-    const lines = fullText.trim().split('\n');
-    let name = lines[0].trim();
-    // Remove trailing SKU/number patterns like " - 0187 A4TECH"
-    name = name.replace(/\s*[-–]\s*\d+\s*[A-Za-z]*$/, '').trim();
-    return name || null;
+  /* ── Debug panel (floating, top-right corner) ──────────────── */
+  let debugPanel = null;
+  function createDebugPanel() {
+    debugPanel = document.createElement('div');
+    debugPanel.id = 'pt-debug';
+    debugPanel.style.cssText = 'position:fixed;top:10px;right:10px;z-index:999999;background:#1a1a2e;color:#e0e0e0;padding:10px 14px;border-radius:8px;font:12px/1.6 monospace;border:1px solid #333;max-height:300px;overflow-y:auto;min-width:220px;box-shadow:0 4px 20px rgba(0,0,0,0.5);';
+    document.body.appendChild(debugPanel);
+  }
+  function debug(msg) {
+    if (!debugPanel) return;
+    const line = document.createElement('div');
+    line.textContent = msg;
+    debugPanel.appendChild(line);
   }
 
-  // ---- Build price badges HTML ----
-  function buildBadges(match) {
-    const { product, confidence } = match;
-    const container = document.createElement('div');
-    container.className = 'pt-price-badges';
+  /* ── Build badge DOM ───────────────────────────────────────── */
+  function buildBadge(matches, confidence) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'pt-wrapper';
 
-    // Confidence indicator
-    const confBadge = document.createElement('span');
-    confBadge.className = 'pt-confidence';
-    confBadge.title = `Match confidence: ${Math.round(confidence * 100)}%`;
-    if (confidence >= 0.85) {
-      confBadge.textContent = '✓';
-    } else if (confidence >= 0.7) {
-      confBadge.textContent = '~';
-    } else {
-      confBadge.textContent = '?';
-    }
-    container.appendChild(confBadge);
+    if (matches.length) {
+      // Confidence indicator
+      const dot = document.createElement('span');
+      dot.className = 'pt-confidence';
+      const pct = Math.round(confidence * 100);
+      dot.textContent = pct >= 85 ? '✓' : pct >= 70 ? '~' : '?';
+      dot.title = 'Match: ' + pct + '%';
+      wrapper.appendChild(dot);
 
-    // Store competitor prices (from the product object)
-    const prices = product.prices || [];
-    if (!prices.length) {
-      const noData = document.createElement('span');
-      noData.className = 'pt-badge pt-no-data';
-      noData.textContent = 'No prices tracked';
-      container.appendChild(noData);
-      return container;
-    }
+      for (const m of matches) {
+        const a = document.createElement('a');
+        a.className = 'pt-badge pt-store-' + m.source;
+        a.href = m.url || '#';
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
 
-    for (const p of prices) {
-      const badge = document.createElement('span');
-      badge.className = `pt-badge pt-store-${(p.store || '').toLowerCase().replace(/\s+/g, '')}`;
+        const storeEl = document.createElement('span');
+        storeEl.className = 'pt-store';
+        storeEl.textContent = m.source.charAt(0).toUpperCase() + m.source.slice(1);
 
-      const storeName = document.createElement('span');
-      storeName.className = 'pt-store-name';
-      storeName.textContent = p.store || 'Unknown';
+        const priceEl = document.createElement('span');
+        priceEl.className = 'pt-price';
+        priceEl.textContent = (m.currency === 'BDT' ? '৳' : '') + Number(m.price).toLocaleString();
 
-      const priceValue = document.createElement('span');
-      priceValue.className = 'pt-price-value';
-      priceValue.textContent = `৳${p.price}`;
-
-      badge.appendChild(storeName);
-      badge.appendChild(priceValue);
-
-      // Tooltip with last updated info
-      if (p.updated_at) {
-        badge.title = `Updated: ${new Date(p.updated_at).toLocaleDateString()}`;
+        a.appendChild(storeEl);
+        a.appendChild(priceEl);
+        if (m.updated_at) {
+          a.title = m.source + ' — Updated ' + new Date(m.updated_at).toLocaleDateString();
+        }
+        wrapper.appendChild(a);
       }
-
-      container.appendChild(badge);
-    }
-
-    return container;
-  }
-
-  // ---- Inject badges into a product row ----
-  function injectBadges(row) {
-    // Skip if already processed
-    if (row.dataset.ptProcessed === '1') return;
-
-    const productName = extractProductName(row);
-    if (!productName) return;
-
-    const match = findBestMatch(productName);
-
-    // Create a container for badges
-    const badgeWrapper = document.createElement('div');
-    badgeWrapper.className = 'pt-badge-wrapper';
-
-    if (match) {
-      badgeWrapper.appendChild(buildBadges(match));
-      row.dataset.ptMatched = '1';
-      console.log(`[PT] Matched "${productName}" → ${match.product.name} (${Math.round(match.confidence * 100)}%)`);
     } else {
+      // No match indicator — always visible so you know it's working
       const noMatch = document.createElement('span');
       noMatch.className = 'pt-no-match';
-      noMatch.textContent = 'No match found';
-      noMatch.title = productName;
-      badgeWrapper.appendChild(noMatch);
-      row.dataset.ptMatched = '0';
+      noMatch.textContent = '— no price match';
+      wrapper.appendChild(noMatch);
     }
+    return wrapper;
+  }
 
-    // Insert after the product name div
-    const nameDiv = row.querySelector('td > div[title]');
-    if (nameDiv) {
-      nameDiv.parentNode.insertBefore(badgeWrapper, nameDiv.nextSibling);
+  /* ── Inject into row ───────────────────────────────────────── */
+  function injectRow(row) {
+    if (row.dataset.ptDone) return;
+    const name = extractName(row);
+    if (!name) { row.dataset.ptDone = '1'; return; }
+
+    const matches = findMatches(name);
+    const conf = matches.length ? Math.max(similarity(name, matches[0].name), MIN_CONF) : 0;
+    const badge = buildBadge(matches, conf);
+
+    // Insert after product name element
+    const target = row.querySelector('td > div[title]')
+                || row.querySelector('td .product-name')
+                || row.querySelector('td .text-link')
+                || row.querySelector('td');
+    if (target) {
+      target.insertAdjacentElement('afterend', badge);
     } else {
-      const firstTd = row.querySelector('td');
-      if (firstTd) {
-        firstTd.appendChild(badgeWrapper);
-      }
+      const first = row.querySelector('td');
+      if (first) first.appendChild(badge);
     }
+    row.dataset.ptDone = '1';
 
-    row.dataset.ptProcessed = '1';
+    if (matches.length) {
+      console.log('[PT]', name, '→', matches.length, 'price(s)');
+    }
+    if (debugPanel) {
+      debug(matches.length
+        ? '✓ ' + name.substring(0, 40)
+        : '✗ ' + name.substring(0, 40) + ' (no match)');
+    }
   }
 
-  // ---- Process all existing rows ----
-  function processExistingRows() {
-    const rows = document.querySelectorAll('#pos_table tbody tr.product_row');
-    rows.forEach(row => injectBadges(row));
-    console.log(`[PT] Processed ${rows.length} existing rows`);
+  /* ── Process all existing rows ─────────────────────────────── */
+  function processAll() {
+    const rows = document.querySelectorAll('#pos_table tbody tr.product_row, #pos_table tbody tr');
+    let n = 0;
+    rows.forEach(r => { if (!r.dataset.ptDone) { injectRow(r); n++; } });
+    if (debugPanel) debug('Processed ' + n + ' rows (total tracked: ' + (tracked ? tracked.length : 0) + ')');
+    if (n) console.log('[PT] processed', n, 'rows');
   }
 
-  // ---- Observe DOM for new rows ----
-  function setupObserver() {
+  /* ── MutationObserver for dynamic rows ─────────────────────── */
+  function observe() {
     const table = document.getElementById('pos_table');
-    if (!table) {
-      console.warn('[PT] #pos_table not found, retrying in 2s...');
-      setTimeout(setupObserver, 2000);
-      return;
-    }
-
-    const tbody = table.querySelector('tbody') || table;
-
-    const observer = new MutationObserver((mutations) => {
-      let hasNewRows = false;
-      for (const mutation of mutations) {
-        for (const node of mutation.addedNodes) {
-          if (node.nodeType === Node.ELEMENT_NODE) {
-            if (node.matches && node.matches('tr.product_row')) {
-              injectBadges(node);
-              hasNewRows = true;
-            }
-            // Check children for product rows
-            if (node.querySelectorAll) {
-              const childRows = node.querySelectorAll('tr.product_row');
-              childRows.forEach(row => {
-                injectBadges(row);
-                hasNewRows = true;
-              });
-            }
-          }
+    if (!table) { setTimeout(observe, 2000); return; }
+    const target = table.querySelector('tbody') || table;
+    new MutationObserver(mutations => {
+      for (const m of mutations) {
+        for (const node of m.addedNodes) {
+          if (node.nodeType !== 1) continue;
+          if (node.matches && node.matches('tr')) injectRow(node);
+          if (node.querySelectorAll) node.querySelectorAll('tr').forEach(injectRow);
         }
       }
-      if (hasNewRows) {
-        console.log('[PT] New product row(s) detected');
+    }).observe(target, { childList: true, subtree: true });
+    if (debugPanel) debug('Observer active on #pos_table');
+  }
+
+  /* ── Popup message listener ────────────────────────────────── */
+  if (typeof chrome !== 'undefined' && chrome.runtime) {
+    chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+      if (msg.action === 'clearCache') {
+        localStorage.removeItem(CACHE_KEY);
+        tracked = null;
+        priceMap.clear();
+        document.querySelectorAll('[data-pt-done]').forEach(r => {
+          delete r.dataset.ptDone;
+          r.querySelectorAll('.pt-wrapper').forEach(w => w.remove());
+        });
+        init();
+        reply({ ok: true });
       }
     });
-
-    observer.observe(tbody, { childList: true, subtree: true });
-    console.log('[PT] MutationObserver attached to #pos_table');
   }
 
-  // ---- Initialize ----
+  /* ── Init ──────────────────────────────────────────────────── */
   async function init() {
-    console.log('[PT] Price Tracker extension initializing...');
+    createDebugPanel();
+    debug('Price Tracker loading…');
 
-    // Fetch competitor products first
-    const data = await fetchCompetitorProducts();
+    const data = await fetchProducts();
     if (!data) {
-      console.warn('[PT] No competitor data available — badges will not appear.');
+      debug('ERROR: Could not fetch products');
+      console.warn('[PT] no data');
       return;
     }
-
-    // Process existing rows
-    processExistingRows();
-
-    // Set up observer for dynamic rows
-    setupObserver();
-
-    console.log('[PT] Initialization complete');
+    debug('Loaded ' + data.length + ' tracked products');
+    processAll();
+    observe();
+    debug('Ready ✓');
+    console.log('[PT] ready');
   }
 
-  // Start when DOM is ready
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
   } else {
     init();
   }
-
-  // Also retry in case POS loads via AJAX later
+  // Retry once after 5 s (POS may load table via AJAX)
   setTimeout(() => {
-    if (!competitorProducts) init();
-    else processExistingRows();
+    if (!tracked) { debug('Retrying…'); init(); } else processAll();
   }, 5000);
-
-  // ---- Message listener (from popup) ----
-  if (typeof chrome !== 'undefined' && chrome.runtime) {
-    chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-      if (msg.action === 'clearCache') {
-        localStorage.removeItem(CONFIG.cacheKey);
-        competitorProducts = null;
-        // Reprocess rows
-        document.querySelectorAll('#pos_table tbody tr.product_row').forEach(row => {
-          delete row.dataset.ptProcessed;
-          delete row.dataset.ptMatched;
-          const wrapper = row.querySelector('.pt-badge-wrapper');
-          if (wrapper) wrapper.remove();
-        });
-        init();
-        sendResponse({ ok: true });
-      }
-    });
-  }
 
 })();

@@ -1,83 +1,66 @@
 /**
- * Ultimate POS Price Tracker - Popup UI
+ * Ultimate POS Price Tracker — Popup UI
  */
 
-const API_URL = 'https://panel.armanazij.me/api';
+const API_BASE = 'https://panel.armanazij.me/api';
+
+function $(id) { return document.getElementById(id); }
 
 async function loadStatus() {
-  const statusEl = document.getElementById('status');
-  const productCountEl = document.getElementById('productCount');
-  const syncBtn = document.getElementById('syncBtn');
+  const el = $('status');
+  const count = $('productCount');
+  const btn = $('syncBtn');
 
-  statusEl.className = 'status loading';
-  statusEl.textContent = 'Connecting to Price Tracker...';
-  syncBtn.disabled = true;
+  el.className = 'status loading';
+  el.textContent = 'Connecting…';
+  btn.disabled = true;
 
   try {
-    const res = await fetch(`${API_URL}/products`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const products = await res.json();
-
-    productCountEl.textContent = products.length;
-    statusEl.className = 'status connected';
-    statusEl.textContent = `✅ Connected — ${products.length} products tracked`;
-    syncBtn.disabled = false;
+    const res = await fetch(API_BASE + '/api/products');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    count.textContent = data.length;
+    el.className = 'status connected';
+    el.textContent = 'Connected — ' + data.length + ' product' + (data.length !== 1 ? 's' : '') + ' tracked';
+    btn.disabled = false;
   } catch (err) {
-    statusEl.className = 'status error';
-    statusEl.textContent = `❌ Connection failed: ${err.message}`;
-    productCountEl.textContent = '0';
+    el.className = 'status error';
+    el.textContent = 'Connection failed: ' + err.message;
+    count.textContent = '—';
   }
-
-  // Show "check POS page" status
-  document.getElementById('matchCount').textContent = '—';
 }
 
 async function syncPrices() {
-  const syncBtn = document.getElementById('syncBtn');
-  const statusEl = document.getElementById('status');
-
-  syncBtn.disabled = true;
-  syncBtn.textContent = '⏳ Syncing...';
+  const btn = $('syncBtn');
+  const el = $('status');
+  btn.disabled = true;
+  btn.textContent = '⏳ Syncing…';
+  el.className = 'status loading';
+  el.textContent = 'Triggering price scrape…';
 
   try {
-    const res = await fetch(`${API_URL}/sync-prices`, { method: 'POST' });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const res = await fetch(API_BASE + '/api/sync-prices', { method: 'POST' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    el.className = 'status connected';
+    el.textContent = 'Synced! Updated ' + data.updated + ', Errors ' + data.errors;
+    btn.textContent = '✅ Done';
 
-    // Clear cache by messaging the content script
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]) {
-        chrome.tabs.sendMessage(tabs[0].id, { action: 'clearCache' }, () => {
-          // Content script may not be loaded on this tab — that's OK
-        });
-      }
+    // Broadcast clearCache to all open POS tabs
+    chrome.runtime.sendMessage({ action: 'clearCache' }, function () {
+      // tabs may not have content script — ignore errors
     });
-
-    statusEl.className = 'status connected';
-    statusEl.textContent = '✅ Sync triggered! Refresh POS page to see new prices.';
-    syncBtn.textContent = '✅ Sync Complete';
   } catch (err) {
-    statusEl.className = 'status error';
-    statusEl.textContent = `❌ Sync failed: ${err.message}`;
-    syncBtn.textContent = '🔄 Retry Sync';
+    el.className = 'status error';
+    el.textContent = 'Sync failed: ' + err.message;
+    btn.textContent = '🔄 Retry';
   }
 
-  setTimeout(() => {
-    syncBtn.disabled = false;
-    syncBtn.textContent = '🔄 Sync Prices Now';
+  setTimeout(function () {
+    btn.disabled = false;
+    btn.textContent = '🔄 Sync Prices';
     loadStatus();
-  }, 3000);
+  }, 4000);
 }
 
-function clearCache() {
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (tabs[0]) {
-      chrome.tabs.sendMessage(tabs[0].id, { action: 'clearCache' }, () => {
-        document.getElementById('matchCount').textContent = 'Cleared';
-        alert('Cache clear signal sent! Refresh the POS page to re-fetch prices.');
-      });
-    }
-  });
-}
-
-// Init
 document.addEventListener('DOMContentLoaded', loadStatus);

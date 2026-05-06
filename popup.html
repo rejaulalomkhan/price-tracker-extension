@@ -117,13 +117,20 @@
     .btn-primary:hover { background: #00b8d4; }
     .btn-primary:disabled { background: #333; color: #666; cursor: not-allowed; }
 
-    .legend {
-      font-size: 10px;
-      color: #555;
-      padding: 8px 16px 14px;
-      border-top: 1px solid #1f1f3a;
+    .legend { font-size:10px; color:#555; padding:8px 16px; border-top:1px solid #1f1f3a; }
+    .legend div { margin:2px 0; }
+
+    .dev-credit {
+      padding:10px 16px;
+      background:#15355a;
+      color:#c0d8f0;
+      font-size:12px;
+      text-align:center;
+      border-top:1px solid #1f4a7a;
     }
-    .legend div { margin: 2px 0; }
+    .dev-credit strong { color:#fff; font-weight:700; }
+    .dev-credit a { color:#4fc3f7; text-decoration:none; font-weight:500; }
+    .dev-credit a:hover { text-decoration:underline; }
   </style>
 </head>
 <body>
@@ -142,6 +149,10 @@
     <div><span class="dot medium"></span> Medium match (70-84%)</div>
     <div><span class="dot low"></span> Low match (60-69%)</div>
   </div>
+
+  <footer class="dev-credit">
+    Developer: <strong>Arman azij</strong> · <a href="https://armanazij.me" target="_blank" rel="noopener">armanazij.me</a>
+  </footer>
 
   <script src="popup.js"></script>
 </body>

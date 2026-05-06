@@ -7,8 +7,12 @@ const resultsEl = document.getElementById("results");
 const countEl = document.getElementById("count");
 const syncBtn = document.getElementById("syncBtn");
 
-function setStatus(text, type) {
-  statusEl.textContent = text;
+function setStatus(text, type, html) {
+  if (html) {
+    statusEl.innerHTML = html;
+  } else {
+    statusEl.textContent = text;
+  }
   statusEl.className = "status " + type;
 }
 
@@ -194,7 +198,12 @@ function matchProducts(posProducts, trackedProducts) {
 
     // Check if we're on the POS page
     if (!tab.url?.includes("bclitstock.com")) {
-      setStatus("Navigate to bclitstock.com/pos/create", "error");
+      setStatus("", "error", 'Navigate to <a href="https://bclitstock.com/pos/create" target="_blank">bclitstock.com/pos/create</a>');
+      statusEl.addEventListener("click", (e) => {
+        if (e.target.tagName === "A") return; // let link handle itself
+        chrome.tabs.create({ url: "https://bclitstock.com/pos/create" });
+        window.close();
+      });
       return;
     }
 

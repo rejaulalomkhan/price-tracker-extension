@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Ultimate POS Price Tracker",
-  "version": "1.0.1",
-  "description": "Shows competitor prices (Ryans, StarTech, Daraz) as badges on Ultimate POS product rows",
-  "permissions": ["storage"],
+  "version": "2.0.0",
+  "description": "Click to check competitor prices for products in your POS cart",
+  "permissions": ["activeTab", "scripting"],
   "host_permissions": [
     "https://bclitstock.com/*",
     "https://panel.armanazij.me/*"
@@ -20,13 +20,5 @@
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  },
-  "content_scripts": [
-    {
-      "matches": ["https://bclitstock.com/*"],
-      "js": ["content.js"],
-      "css": ["styles.css"],
-      "run_at": "document_idle"
-    }
-  ]
+  }
 }

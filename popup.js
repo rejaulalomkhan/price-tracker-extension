@@ -1,87 +1,291 @@
-/**
- * Ultimate POS Price Tracker — Popup UI
- */
+// Price Tracker Extension v2.0 — Click-only, no auto-run
 
-const API_BASE = 'https://panel.armanazij.me/api';
-const POS_HOST = '*://bclitstock.com/*';
+const API_BASE = "https://panel.armanazij.me/api";
 
-function $(id) { return document.getElementById(id); }
+const statusEl = document.getElementById("status");
+const resultsEl = document.getElementById("results");
+const countEl = document.getElementById("count");
+const syncBtn = document.getElementById("syncBtn");
 
-/** Send message to POS tabs, suppress "no receiver" warning */
-function broadcastToPOS(msg) {
-  chrome.tabs.query({ url: [POS_HOST] }, function (tabs) {
-    tabs.forEach(function (tab) {
-      chrome.tabs.sendMessage(tab.id, msg, function () {
-        // silently swallow "could not establish connection"
-        void chrome.runtime.lastError;
+function setStatus(text, type) {
+  statusEl.textContent = text;
+  statusEl.className = "status " + type;
+}
+
+function norm(s) {
+  return s
+    .toLowerCase()
+    .replace(/\b(wired|wireless|usb|bluetooth|black|white|red|for|with|and|the)\b/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function calcSimilarity(trackedName, posName) {
+  const a = norm(trackedName).split(" ");
+  const b = norm(posName).split(" ");
+  const shorter = a.length < b.length ? a : b;
+  const longer = a.length < b.length ? b : a;
+  const common = shorter.filter((t) => longer.includes(t) && t.length > 2);
+  if (shorter.length === 0) return { score: 0, matched: 0, total: 0 };
+  const score = common.length / shorter.length;
+  return { score, matched: common.length, total: shorter.length };
+}
+
+function matchClass(score) {
+  if (score >= 0.85) return "high";
+  if (score >= 0.70) return "medium";
+  if (score >= 0.60) return "low";
+  return "none";
+}
+
+function sourceClass(src) {
+  const s = src.toLowerCase();
+  if (s.includes("ryans")) return "ryans";
+  if (s.includes("startech") || s.includes("star tech")) return "startech";
+  if (s.includes("daraz")) return "daraz";
+  return "other";
+}
+
+async function fetchPrices() {
+  const res = await fetch(API_BASE + "/products", {
+    headers: { Accept: "application/json" },
+  });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return res.json();
+}
+
+// Step 1: Extract products from POS table
+async function extractPosProducts(tabId) {
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      const rows = document.querySelectorAll("#pos_table tbody tr, #pos_table tr.product_row, #pos_table tr[data-row_index]");
+      const products = [];
+      rows.forEach((row, i) => {
+        // Try to find product name
+        const nameEl =
+          row.querySelector(".text-link.text-info") ||
+          row.querySelector("td:nth-child(2) a") ||
+          row.querySelector("a[href*='product']") ||
+          row.querySelector("td:nth-child(2)");
+
+        if (!nameEl) return;
+
+        // Get text before <br> (product name without SKU)
+        const rawText = nameEl.innerHTML || nameEl.textContent;
+        const name = rawText.split("<br>")[0].replace(/<[^>]*>/g, "").trim();
+        if (!name) return;
+
+        // Get price
+        const priceEl =
+          row.querySelector(".hidden_base_unit_sell_price") ||
+          row.querySelector('input[name*="price"]') ||
+          row.querySelector('input[name*="rate"]');
+        const price = priceEl ? parseFloat(priceEl.value || priceEl.textContent) : null;
+
+        products.push({
+          rowIndex: i,
+          name,
+          price,
+          rowId: row.getAttribute("data-row_index") || ("row-" + i),
+        });
       });
-    });
+      return products;
+    },
+  });
+  return results[0]?.result || [];
+}
+
+// Step 2: Inject badges into the page
+async function injectBadges(tabId, results) {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    func: (data) => {
+      // Remove old badges
+      document.querySelectorAll(".pt-badge").forEach((el) => el.remove());
+
+      data.forEach((item) => {
+        const row = document.querySelector(
+          `tr[data-row_index="${item.rowId}"], tr:nth-child(${item.rowIndex + 1})`
+        );
+        if (!row) return;
+
+        // Find the price/name cell to attach badge
+        let target =
+          row.querySelector("td:nth-child(3)") ||
+          row.querySelector("td:nth-child(2)") ||
+          row.querySelector("td:last-child") ||
+          row.querySelector("td");
+        if (!target) return;
+
+        // Create badge container
+        const badge = document.createElement("div");
+        badge.className = "pt-badge";
+        badge.style.cssText =
+          "margin-top:6px;display:flex;flex-wrap:wrap;gap:4px;";
+
+        if (!item.matches || item.matches.length === 0) {
+          const noMatch = document.createElement("span");
+          noMatch.style.cssText = "font-size:10px;color:#888;";
+          noMatch.textContent = "— no price match";
+          badge.appendChild(noMatch);
+        } else {
+          item.matches.forEach((m) => {
+            const tag = document.createElement("a");
+            tag.href = m.url || "#";
+            tag.target = "_blank";
+            tag.rel = "noopener";
+            const src = (m.source || "").toLowerCase();
+            let bg = "#eee", color = "#333", border = "#ccc";
+            if (src.includes("ryans")) { bg = "#e8f5e9"; color = "#1b5e20"; border = "#4caf50"; }
+            else if (src.includes("star")) { bg = "#e3f2fd"; color = "#0d47a1"; border = "#2196f3"; }
+            else if (src.includes("daraz")) { bg = "#fff3e0"; color = "#e65100"; border = "#ff9800"; }
+            tag.style.cssText = `display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;background:${bg};color:${color};border:1px solid ${border};text-decoration:none;`;
+            tag.textContent = `${m.source || "?"}: ৳${m.price || "?"}`;
+            badge.appendChild(tag);
+          });
+        }
+
+        target.appendChild(badge);
+      });
+    },
+    args: [results],
   });
 }
 
-async function loadStatus() {
-  const el = $('status');
-  const count = $('productCount');
-  const btn = $('syncBtn');
+// Step 3: Match POS products against tracked prices
+function matchProducts(posProducts, trackedProducts) {
+  return posProducts.map((pos) => {
+    let best = null;
+    let bestScore = 0;
+    for (const tp of trackedProducts) {
+      const sim = calcSimilarity(tp.name, pos.name);
+      if (sim.score >= 0.6 && sim.score > bestScore) {
+        bestScore = sim.score;
+        best = { ...tp, similarity: sim };
+      }
+    }
+    if (best) {
+      // Build competitor price list from tracked product's competitor_prices
+      const competitors = (best.competitor_prices || []).map((cp) => ({
+        source: cp.source,
+        price: cp.price,
+        url: cp.url,
+      }));
+      return {
+        ...pos,
+        matchName: best.name,
+        similarity: best.similarity,
+        matches: competitors,
+      };
+    }
+    return { ...pos, matches: [] };
+  });
+}
 
-  el.className = 'status loading';
-  el.textContent = 'Connecting…';
-  btn.disabled = true;
-
+// Main flow
+(async function () {
   try {
-    const res = await fetch(API_BASE + '/api/products');
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const data = await res.json();
-    count.textContent = data.length;
-    el.className = 'status connected';
-    el.textContent = 'Connected — ' + data.length + ' product' + (data.length !== 1 ? 's' : '') + ' tracked';
-    btn.disabled = false;
+    // Get current tab
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab) {
+      setStatus("No active tab", "error");
+      return;
+    }
+
+    // Check if we're on the POS page
+    if (!tab.url?.includes("bclitstock.com")) {
+      setStatus("Navigate to bclitstock.com/pos/create", "error");
+      return;
+    }
+
+    setStatus("Scanning POS products…", "loading");
+
+    // Extract products
+    const posProducts = await extractPosProducts(tab.id);
+    countEl.textContent = posProducts.length;
+
+    if (posProducts.length === 0) {
+      setStatus("No products found in POS table", "error");
+      return;
+    }
+
+    setStatus("Fetching competitor prices…", "loading");
+
+    // Fetch tracked products from API
+    const trackedProducts = await fetchPrices();
+
+    // Match
+    const results = matchProducts(posProducts, trackedProducts);
+
+    // Inject badges into page
+    await injectBadges(tab.id, results);
+
+    setStatus(`✓ Found ${posProducts.length} products — badges injected`, "connected");
+    syncBtn.disabled = false;
+
+    // Render popup results
+    results.forEach((r) => {
+      const card = document.createElement("div");
+      card.className = "result-card";
+
+      const nameDiv = document.createElement("div");
+      nameDiv.className = "name";
+      nameDiv.textContent = r.name;
+      card.appendChild(nameDiv);
+
+      if (r.matchName) {
+        const matchInfo = document.createElement("div");
+        matchInfo.className = "match-info";
+        const dot = `<span class="dot ${matchClass(r.similarity.score)}"></span>`;
+        matchInfo.innerHTML = `${dot} Matched: "${r.matchName}" (${Math.round(r.similarity.score * 100)}%)`;
+        card.appendChild(matchInfo);
+      }
+
+      const tagsDiv = document.createElement("div");
+      tagsDiv.className = "price-tags";
+
+      if (r.matches && r.matches.length > 0) {
+        r.matches.forEach((m) => {
+          const tag = document.createElement("a");
+          tag.className = `price-tag ${sourceClass(m.source)}`;
+          tag.href = m.url || "#";
+          tag.target = "_blank";
+          tag.rel = "noopener";
+          tag.innerHTML = `<span class="label">${m.source || "?"}</span> <span class="amount">৳${m.price || "?"}</span>`;
+          tagsDiv.appendChild(tag);
+        });
+      } else {
+        const noMatch = document.createElement("span");
+        noMatch.className = "no-match";
+        noMatch.textContent = "— no price match found";
+        tagsDiv.appendChild(noMatch);
+      }
+
+      card.appendChild(tagsDiv);
+      resultsEl.appendChild(card);
+    });
   } catch (err) {
-    el.className = 'status error';
-    el.textContent = 'Connection failed: ' + err.message;
-    count.textContent = '—';
+    setStatus("Error: " + err.message, "error");
+    console.error("[PT]", err);
   }
-}
+})();
 
-async function syncPrices() {
-  const btn = $('syncBtn');
-  const el = $('status');
-  btn.disabled = true;
-  btn.textContent = '⏳ Syncing…';
-  el.className = 'status loading';
-  el.textContent = 'Triggering price scrape…';
-
+// Sync button
+syncBtn.addEventListener("click", async () => {
+  syncBtn.disabled = true;
+  syncBtn.textContent = "⏳ Syncing…";
   try {
-    const res = await fetch(API_BASE + '/api/sync-prices', { method: 'POST' });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const data = await res.json();
-    el.className = 'status connected';
-    el.textContent = 'Synced! Updated ' + data.updated + ', Errors ' + data.errors;
-    btn.textContent = '✅ Done';
-
-    // Broadcast clearCache to content scripts on all open POS tabs
-    broadcastToPOS({ action: 'clearCache' });
+    await fetch(API_BASE + "/sync-prices", { method: "POST" });
+    syncBtn.textContent = "✓ Synced!";
+    setTimeout(() => {
+      syncBtn.textContent = "🔄 Sync Prices";
+      syncBtn.disabled = false;
+    }, 2000);
   } catch (err) {
-    el.className = 'status error';
-    el.textContent = 'Sync failed: ' + err.message;
-    btn.textContent = '🔄 Retry';
+    syncBtn.textContent = "✗ Sync failed";
+    syncBtn.disabled = false;
+    console.error("[PT] sync failed:", err);
   }
-
-  setTimeout(function () {
-    btn.disabled = false;
-    btn.textContent = '🔄 Sync Prices';
-    loadStatus();
-  }, 4000);
-}
-
-function clearCache() {
-  broadcastToPOS({ action: 'clearCache' });
-  alert('Cache clear signal sent! Refresh the POS page.');
-}
-
-// Wire up buttons (no inline onclick — CSP blocks it)
-document.addEventListener('DOMContentLoaded', function () {
-  $('syncBtn').addEventListener('click', syncPrices);
-  $('clearCacheBtn').addEventListener('click', clearCache);
-  loadStatus();
 });

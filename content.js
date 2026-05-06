@@ -309,4 +309,23 @@
     else processExistingRows();
   }, 5000);
 
+  // ---- Message listener (from popup) ----
+  if (typeof chrome !== 'undefined' && chrome.runtime) {
+    chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+      if (msg.action === 'clearCache') {
+        localStorage.removeItem(CONFIG.cacheKey);
+        competitorProducts = null;
+        // Reprocess rows
+        document.querySelectorAll('#pos_table tbody tr.product_row').forEach(row => {
+          delete row.dataset.ptProcessed;
+          delete row.dataset.ptMatched;
+          const wrapper = row.querySelector('.pt-badge-wrapper');
+          if (wrapper) wrapper.remove();
+        });
+        init();
+        sendResponse({ ok: true });
+      }
+    });
+  }
+
 })();

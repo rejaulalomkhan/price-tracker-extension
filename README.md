@@ -14,7 +14,7 @@ Shows competitor prices (Ryans, StarTech, Daraz) as badges on Ultimate POS produ
 
 1. Open Chrome → `chrome://extensions/`
 2. Enable **Developer mode**
-3. Click **Load unpacked** → select this folder
+3. Click **Load unpacked** → select this folder (not a zip, the folder itself)
 4. Open your POS page — badges appear automatically
 
 ## Architecture

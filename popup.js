@@ -28,15 +28,8 @@ async function loadStatus() {
     productCountEl.textContent = '0';
   }
 
-  // Load match count from localStorage
-  try {
-    const cached = localStorage.getItem('pt_product_matches');
-    if (cached) {
-      const { timestamp } = JSON.parse(cached);
-      const age = Math.round((Date.now() - timestamp) / 60000);
-      document.getElementById('matchCount').textContent = age < 60 ? `${age}m ago` : 'Expired';
-    }
-  } catch (e) {}
+  // Show "check POS page" status
+  document.getElementById('matchCount').textContent = '—';
 }
 
 async function syncPrices() {
@@ -50,8 +43,14 @@ async function syncPrices() {
     const res = await fetch(`${API_URL}/sync-prices`, { method: 'POST' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-    // Clear cache so content script refetches
-    localStorage.removeItem('pt_product_matches');
+    // Clear cache by messaging the content script
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]) {
+        chrome.tabs.sendMessage(tabs[0].id, { action: 'clearCache' }, () => {
+          // Content script may not be loaded on this tab — that's OK
+        });
+      }
+    });
 
     statusEl.className = 'status connected';
     statusEl.textContent = '✅ Sync triggered! Refresh POS page to see new prices.';
@@ -70,9 +69,14 @@ async function syncPrices() {
 }
 
 function clearCache() {
-  localStorage.removeItem('pt_product_matches');
-  document.getElementById('matchCount').textContent = 'Cleared';
-  alert('Cache cleared! Refresh the POS page to re-fetch prices.');
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs[0]) {
+      chrome.tabs.sendMessage(tabs[0].id, { action: 'clearCache' }, () => {
+        document.getElementById('matchCount').textContent = 'Cleared';
+        alert('Cache clear signal sent! Refresh the POS page to re-fetch prices.');
+      });
+    }
+  });
 }
 
 // Init

@@ -23,41 +23,35 @@
   function normalizeName(name) {
     return name
       .toLowerCase()
-      .replace(/\b(wired|wireless|usb|bluetooth|black|white|red)\b/g, '')
+      .replace(/\b(wired|wireless|usb|bluetooth|black|white|red|for|with|and|the)\b/g, '')
       .replace(/[^a-z0-9\s]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
   }
 
-  // ---- Utility: Levenshtein distance ----
-  function levenshtein(a, b) {
-    const m = a.length, n = b.length;
-    const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
-    for (let i = 0; i <= m; i++) dp[i][0] = i;
-    for (let j = 0; j <= n; j++) dp[0][j] = j;
-    for (let i = 1; i <= m; i++) {
-      for (let j = 1; j <= n; j++) {
-        dp[i][j] = Math.min(
-          dp[i - 1][j] + 1,
-          dp[i][j - 1] + 1,
-          dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
-        );
-      }
-    }
-    return dp[m][n];
-  }
-
-  // ---- Utility: Similarity score (0-1) ----
+  // ---- Utility: Similarity score (0-1) — token containment based ----
   function similarity(a, b) {
     const na = normalizeName(a);
     const nb = normalizeName(b);
     if (!na || !nb) return 0;
-    // Check substring containment first
-    if (na.includes(nb) || nb.includes(na)) {
-      return Math.min(na.length, nb.length) / Math.max(na.length, nb.length);
+    if (na === nb) return 1.0;
+
+    // Extract meaningful tokens (skip very short ones)
+    const tokensA = na.split(' ').filter(t => t.length > 2);
+    const tokensB = nb.split(' ').filter(t => t.length > 2);
+    const common = tokensA.filter(t => tokensB.includes(t));
+
+    // Key metric: what % of the SHORTER name's tokens are in the longer one
+    const shorterCount = Math.min(tokensA.length, tokensB.length);
+    if (shorterCount > 0) {
+      const containment = common.length / shorterCount;
+      if (containment >= 0.6) {
+        return 0.5 + (containment * 0.5); // 0.6→0.8, 1.0→1.0
+      }
     }
-    const dist = levenshtein(na, nb);
-    return 1 - dist / Math.max(na.length, nb.length);
+
+    // Fallback: simple word overlap
+    return common.length / Math.max(tokensA.length, tokensB.length, 1);
   }
 
   // ---- Fetch competitor products from API ----

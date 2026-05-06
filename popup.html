@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Price Tracker</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 320px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      padding: 16px;
+    }
+    h2 {
+      font-size: 16px;
+      margin-bottom: 12px;
+      color: #00d4ff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .status {
+      font-size: 12px;
+      padding: 8px;
+      border-radius: 6px;
+      margin-bottom: 12px;
+      background: #16213e;
+      border: 1px solid #0f3460;
+    }
+    .status.connected { border-left: 3px solid #00d4ff; }
+    .status.error { border-left: 3px solid #e74c3c; }
+    .status.loading { border-left: 3px solid #f39c12; }
+    .stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .stat-card {
+      background: #16213e;
+      padding: 10px;
+      border-radius: 6px;
+      text-align: center;
+    }
+    .stat-card .value {
+      font-size: 20px;
+      font-weight: 700;
+      color: #00d4ff;
+    }
+    .stat-card .label {
+      font-size: 10px;
+      color: #888;
+      margin-top: 2px;
+    }
+    button {
+      width: 100%;
+      padding: 10px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-bottom: 8px;
+    }
+    .btn-primary {
+      background: #00d4ff;
+      color: #1a1a2e;
+    }
+    .btn-primary:hover { background: #00b8d4; }
+    .btn-primary:disabled {
+      background: #333;
+      color: #666;
+      cursor: not-allowed;
+    }
+    .btn-secondary {
+      background: #16213e;
+      color: #00d4ff;
+      border: 1px solid #0f3460;
+    }
+    .btn-secondary:hover { background: #0f3460; }
+    .legend {
+      font-size: 11px;
+      color: #666;
+      margin-top: 12px;
+      padding-top: 8px;
+      border-top: 1px solid #333;
+    }
+    .legend div { margin: 3px 0; }
+    .legend span { margin-right: 6px; }
+  </style>
+</head>
+<body>
+  <h2>🏷️ Price Tracker</h2>
+  
+  <div id="status" class="status loading">Connecting to Price Tracker...</div>
+  
+  <div class="stats">
+    <div class="stat-card">
+      <div class="value" id="productCount">—</div>
+      <div class="label">Tracked Products</div>
+    </div>
+    <div class="stat-card">
+      <div class="value" id="matchCount">—</div>
+      <div class="label">POS Matches</div>
+    </div>
+  </div>
+
+  <button id="syncBtn" class="btn-primary" onclick="syncPrices()">🔄 Sync Prices Now</button>
+  <button class="btn-secondary" onclick="clearCache()">🗑️ Clear Cache</button>
+
+  <div class="legend">
+    <div><span style="color:#28a745">●</span> High match (≥85%)</div>
+    <div><span style="color:#ffc107">●</span> Medium match (70-84%)</div>
+    <div><span style="color:#fd7e14">●</span> Low match (65-69%)</div>
+    <div style="margin-top:6px;">Badges appear on POS product rows automatically.</div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

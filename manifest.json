@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Ultimate POS Price Tracker",
+  "name": "AR Price Tracker",
   "version": "2.0.0",
   "description": "Click to check competitor prices for products in your POS cart",
   "permissions": ["activeTab", "scripting"],

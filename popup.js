@@ -3,8 +3,21 @@
  */
 
 const API_BASE = 'https://panel.armanazij.me/api';
+const POS_HOST = '*://bclitstock.com/*';
 
 function $(id) { return document.getElementById(id); }
+
+/** Send message to POS tabs, suppress "no receiver" warning */
+function broadcastToPOS(msg) {
+  chrome.tabs.query({ url: [POS_HOST] }, function (tabs) {
+    tabs.forEach(function (tab) {
+      chrome.tabs.sendMessage(tab.id, msg, function () {
+        // silently swallow "could not establish connection"
+        void chrome.runtime.lastError;
+      });
+    });
+  });
+}
 
 async function loadStatus() {
   const el = $('status');
@@ -46,10 +59,8 @@ async function syncPrices() {
     el.textContent = 'Synced! Updated ' + data.updated + ', Errors ' + data.errors;
     btn.textContent = '✅ Done';
 
-    // Broadcast clearCache to content scripts on all open tabs
-    chrome.runtime.sendMessage({ action: 'clearCache' }, function () {
-      // may fail if no tabs open — ignore
-    });
+    // Broadcast clearCache to content scripts on all open POS tabs
+    broadcastToPOS({ action: 'clearCache' });
   } catch (err) {
     el.className = 'status error';
     el.textContent = 'Sync failed: ' + err.message;
@@ -64,9 +75,7 @@ async function syncPrices() {
 }
 
 function clearCache() {
-  chrome.runtime.sendMessage({ action: 'clearCache' }, function () {
-    // ignore errors
-  });
+  broadcastToPOS({ action: 'clearCache' });
   alert('Cache clear signal sent! Refresh the POS page.');
 }
 

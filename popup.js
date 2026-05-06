@@ -46,9 +46,9 @@ async function syncPrices() {
     el.textContent = 'Synced! Updated ' + data.updated + ', Errors ' + data.errors;
     btn.textContent = '✅ Done';
 
-    // Broadcast clearCache to all open POS tabs
+    // Broadcast clearCache to content scripts on all open tabs
     chrome.runtime.sendMessage({ action: 'clearCache' }, function () {
-      // tabs may not have content script — ignore errors
+      // may fail if no tabs open — ignore
     });
   } catch (err) {
     el.className = 'status error';
@@ -63,4 +63,16 @@ async function syncPrices() {
   }, 4000);
 }
 
-document.addEventListener('DOMContentLoaded', loadStatus);
+function clearCache() {
+  chrome.runtime.sendMessage({ action: 'clearCache' }, function () {
+    // ignore errors
+  });
+  alert('Cache clear signal sent! Refresh the POS page.');
+}
+
+// Wire up buttons (no inline onclick — CSP blocks it)
+document.addEventListener('DOMContentLoaded', function () {
+  $('syncBtn').addEventListener('click', syncPrices);
+  $('clearCacheBtn').addEventListener('click', clearCache);
+  loadStatus();
+});

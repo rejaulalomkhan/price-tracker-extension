@@ -102,7 +102,7 @@ async function injectBadges(tabId, results) {
   await chrome.scripting.executeScript({
     target: { tabId },
     func: (data) => {
-      // Remove old badges
+      // Remove old badges (both old and new class)
       document.querySelectorAll(".pt-badge").forEach((el) => el.remove());
 
       data.forEach((item) => {
@@ -112,18 +112,17 @@ async function injectBadges(tabId, results) {
         if (!row) return;
 
         // Find the price/name cell to attach badge
-        let target =
-          row.querySelector("td:nth-child(3)") ||
-          row.querySelector("td:nth-child(2)") ||
-          row.querySelector("td:last-child") ||
-          row.querySelector("td");
+        // Inject after the product name link
+        let nameEl = row.querySelector("a.text-link") || row.querySelector("a") || row.querySelector("td:first-child");
+        let target = nameEl || row.querySelector("td") || row;
         if (!target) return;
 
         // Create badge container
         const badge = document.createElement("div");
         badge.className = "pt-badge";
         badge.style.cssText =
-          "margin-top:6px;display:flex;flex-wrap:wrap;gap:4px;";
+          "margin-top:6px;display:flex;flex-wrap:wrap;gap:4px;padding:4px 0;";
+        badge.setAttribute('data-pt-badge', '1');
 
         if (!item.matches || item.matches.length === 0) {
           const noMatch = document.createElement("span");
@@ -167,17 +166,16 @@ function matchProducts(posProducts, trackedProducts) {
       }
     }
     if (best) {
-      // Build competitor price list from tracked product's competitor_prices
-      const competitors = (best.competitor_prices || []).map((cp) => ({
-        source: cp.source,
-        price: cp.price,
-        url: cp.url,
-      }));
+      // API returns flat objects with current_price, source, url
       return {
         ...pos,
         matchName: best.name,
         similarity: best.similarity,
-        matches: competitors,
+        matches: [{
+          source: best.source,
+          price: best.current_price,
+          url: best.url,
+        }],
       };
     }
     return { ...pos, matches: [] };
@@ -218,6 +216,7 @@ function matchProducts(posProducts, trackedProducts) {
 
     // Match
     const results = matchProducts(posProducts, trackedProducts);
+    console.log('[PT] Match results:', JSON.stringify(results, null, 2));
 
     // Inject badges into page
     await injectBadges(tab.id, results);
